@@ -3550,65 +3550,32 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         LinearLayout rows = panel.findViewById(R.id.rows);
         int width = Math.max(quickAccessPosition ? 0 : anchor.getWidth(), (int) (230 * density));
         final PopupWindow popup = glassPopup(panel, width);
-        PackageManager pm = getPackageManager();
-        for (String pkg : Recents.recent(this, 6)) {
-            try {
-                ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
-                Intent launch = pm.getLeanbackLaunchIntentForPackage(pkg);
-                if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
-                if (launch == null || pm.resolveActivity(launch, 0) == null) continue;
-
-                View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
-                ImageView icon = row.findViewById(R.id.icon);
-                icon.setImageDrawable(info.loadIcon(pm));
-                icon.setImageTintList(null);
-                ((TextView) row.findViewById(R.id.title)).setText(pm.getApplicationLabel(info));
-                row.findViewById(R.id.dot).setVisibility(View.GONE);
-                row.findViewById(R.id.status).setVisibility(View.GONE);
-                final Intent selected = new Intent(launch);
-                row.setOnClickListener(v -> {
-                    popup.dismiss();
-                    try {
-                        open(selected.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                                | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
-                    } catch (RuntimeException unavailable) {
-                        Toast.makeText(this, R.string.recent_apps_unavailable, Toast.LENGTH_SHORT).show();
-                    }
-                });
-                rows.addView(row);
-            } catch (PackageManager.NameNotFoundException | RuntimeException unavailable) {
-                // The app may have disappeared or become disabled between the usage query and rendering.
+        RecentAppsPanel.populate(this, rows, new RecentAppsPanel.Actions() {
+            @Override
+            public void open(Intent selected) {
+                popup.dismiss();
+                try {
+                    MainActivity.this.open(selected.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+                } catch (RuntimeException unavailable) {
+                    Toast.makeText(MainActivity.this, R.string.recent_apps_unavailable,
+                            Toast.LENGTH_SHORT).show();
+                }
             }
-        }
-        boolean hasRecentRows = rows.getChildCount() > 0;
-        if (!hasRecentRows) {
-            View empty = getLayoutInflater().inflate(R.layout.item_input, rows, false);
-            empty.findViewById(R.id.icon).setVisibility(View.GONE);
-            ((TextView) empty.findViewById(R.id.title)).setText(
-                    Recents.hasUsageAccess(this) ? R.string.recent_apps_empty : R.string.recents_need_access);
-            empty.findViewById(R.id.dot).setVisibility(View.GONE);
-            empty.findViewById(R.id.status).setVisibility(View.GONE);
-            empty.setFocusable(false);
-            empty.setClickable(false);
-            rows.addView(empty);
-        }
-        if (hasRecentRows || rows.getChildCount() > 0) addSeparator(rows);
-        View closeAll = getLayoutInflater().inflate(R.layout.item_input, rows, false);
-        ((ImageView) closeAll.findViewById(R.id.icon)).setImageResource(R.drawable.ic_apps);
-        ((TextView) closeAll.findViewById(R.id.title)).setText(R.string.close_all);
-        closeAll.findViewById(R.id.dot).setVisibility(View.GONE);
-        closeAll.findViewById(R.id.status).setVisibility(View.GONE);
-        closeAll.setOnClickListener(v -> {
-            long before = Recents.availableMemory(this);
-            Recents.closeAll(this);
-            popup.dismiss();
-            handler.postDelayed(() -> {
-                long after = Recents.availableMemory(this);
-                long freed = Math.max(0L, after - before) / (1024L * 1024L);
-                Toast.makeText(this, getString(R.string.freed_memory, freed), Toast.LENGTH_SHORT).show();
-            }, 350L);
+
+            @Override
+            public void closeAll() {
+                long before = Recents.availableMemory(MainActivity.this);
+                Recents.closeAll(MainActivity.this);
+                popup.dismiss();
+                handler.postDelayed(() -> {
+                    long after = Recents.availableMemory(MainActivity.this);
+                    long freed = Math.max(0L, after - before) / (1024L * 1024L);
+                    Toast.makeText(MainActivity.this,
+                            getString(R.string.freed_memory, freed), Toast.LENGTH_SHORT).show();
+                }, 350L);
+            }
         });
-        rows.addView(closeAll);
         panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         popup.setWidth(Math.max(width, Math.min(panel.getMeasuredWidth(), (int) (360 * density))));
         if (quickAccessPosition) dropInAtQuickAccess(popup, panel);

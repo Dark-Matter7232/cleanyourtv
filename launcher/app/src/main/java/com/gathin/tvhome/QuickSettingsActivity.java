@@ -50,6 +50,10 @@ public final class QuickSettingsActivity extends Activity {
                     break;
             }
             if (effect != -1) getWindow().getDecorView().playSoundEffect(effect);
+            if (event.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (wrapFocus(event.getKeyCode())) return true;
+            }
         }
         return super.dispatchKeyEvent(event);
     }
@@ -135,6 +139,32 @@ public final class QuickSettingsActivity extends Activity {
         row.findViewById(R.id.status).setVisibility(View.GONE);
         row.setOnClickListener(v -> action.run());
         rows.addView(row);
+    }
+
+    /** Keep the short utility list circular, as TV users expect from a menu panel. */
+    private boolean wrapFocus(int keyCode) {
+        LinearLayout rows = findViewById(R.id.rows);
+        View focused = rows.findFocus();
+        if (focused == null) return false;
+
+        View first = null;
+        View last = null;
+        for (int i = 0; i < rows.getChildCount(); i++) {
+            View row = rows.getChildAt(i);
+            if (!row.isFocusable()) continue;
+            if (first == null) first = row;
+            last = row;
+        }
+        if (first == null || last == null) return false;
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP && focused == first) {
+            last.requestFocus();
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && focused == last) {
+            first.requestFocus();
+            return true;
+        }
+        return false;
     }
 
     /** Close the glass panel first, then capture the app that was underneath it. */
