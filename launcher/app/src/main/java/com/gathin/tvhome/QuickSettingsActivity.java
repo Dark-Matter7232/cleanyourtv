@@ -2,10 +2,9 @@ package com.gathin.tvhome;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.SoundEffectConstants;
@@ -22,7 +21,7 @@ import android.widget.Toast;
  * closes the panel.
  */
 public final class QuickSettingsActivity extends Activity {
-    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private boolean screenshotWhenStopped;
 
     /** Keep the panel's navigation sounds in the same native sound-effect channel as Home. */
     @Override
@@ -112,6 +111,17 @@ public final class QuickSettingsActivity extends Activity {
         overridePendingTransition(0, 0);
     }
 
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (!screenshotWhenStopped) return;
+        screenshotWhenStopped = false;
+        Context app = getApplicationContext();
+        if (!HomeKeyService.takeScreenshot()) {
+            Toast.makeText(app, R.string.not_available, Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void addRow(LinearLayout rows, int icon, int title, int status, Intent target) {
         View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
         ((ImageView) row.findViewById(R.id.icon)).setImageResource(icon);
@@ -169,12 +179,7 @@ public final class QuickSettingsActivity extends Activity {
 
     /** Close the glass panel first, then capture the app that was underneath it. */
     private void takeScreenshot() {
-        android.content.Context app = getApplicationContext();
+        screenshotWhenStopped = true;
         finish();
-        MAIN.postDelayed(() -> {
-            if (!HomeKeyService.takeScreenshot()) {
-                Toast.makeText(app, R.string.not_available, Toast.LENGTH_SHORT).show();
-            }
-        }, 220L);
     }
 }

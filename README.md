@@ -294,7 +294,7 @@ set is in [Troubleshooting](docs/TROUBLESHOOTING.md).
 | **Configure** | Dock order, hidden apps, Live TV app, 4 to 7 tiles per row, reduced motion. All in [`config.xml`](launcher/app/src/main/res/values/config.xml) |
 | **Settings on the TV** | Hold OK on Settings for launcher settings. Optional `launcher_settings_button` makes a normal click open them directly; TV settings remain on the settings page and their app tile. |
 | **Quick Access** | A native-looking glass menu for TV Settings, Network, Bluetooth/Remote & Accessories, Sound, Display, Recent apps and Launcher Settings. |
-| **Screenshots** | Quick Access captures the screen without opening the system edit/share overlay and saves lossless `AppName_YYYY-MM-DD_HH-mm-ss-SSS.webp` files in `Pictures/Screenshots`, using the foreground app's name. |
+| **Screenshots** | Quick Access captures the screen without opening the system edit/share overlay and saves high-quality lossy WebP (`quality 92`) `AppName_YYYY-MM-DD_HH-mm-ss-SSS.webp` files in `Pictures/Screenshots`, using the foreground app's name. The encoder is tuned for high-entropy video frames and is the default on Android 11+. |
 | **Recent apps** | A lightweight UsageStats-based list with app launching and Close all; it uses the same compact overlay when opened from Home or Quick Access. |
 | **Inputs** | Lists Home, HDMI, AV and Live TV sources, preserves CEC child-device names when the firmware reports them, and can add a TV-specific ARC label such as `HDMI 1 · Soundbar (ARC)`. |
 | **Wi-Fi panel** | Shows link details and nearby networks, then performs a bounded cached throughput check rather than polling continuously. |

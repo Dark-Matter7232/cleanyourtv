@@ -32,6 +32,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
 
 import java.io.IOException;
+import java.io.BufferedOutputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
@@ -479,10 +480,13 @@ public class HomeKeyService extends AccessibilityService {
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
         android.net.Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) return false;
-        try (OutputStream output = resolver.openOutputStream(uri)) {
+        try (OutputStream rawOutput = resolver.openOutputStream(uri);
+             OutputStream output = rawOutput == null ? null : new BufferedOutputStream(rawOutput, 64 * 1024)) {
             Bitmap.CompressFormat format = webp
-                    ? Bitmap.CompressFormat.WEBP_LOSSLESS : Bitmap.CompressFormat.PNG;
-            if (output == null || !bitmap.compress(format, 100, output)) {
+                    ? Bitmap.CompressFormat.WEBP : Bitmap.CompressFormat.PNG;
+            // Lossless WebP is disproportionately slow for high-entropy video frames. Quality 92 keeps
+            // launcher text and glass UI clean while allowing libwebp's fast lossy path to finish quickly.
+            if (output == null || !bitmap.compress(format, webp ? 92 : 100, output)) {
                 throw new IOException("screenshot encode failed");
             }
             ContentValues ready = new ContentValues();
