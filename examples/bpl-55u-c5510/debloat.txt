@@ -1,0 +1,43 @@
+# BPL 55U-C5510 (Changhong AI PONT, DVB96BL / central), Android TV 11 (API 30),
+# firmware RTM5.220609.235, MediaTek m7632, 1920x1080 at 320 dpi.
+#
+# Apply:   TV_HOST=<tv ip> tools/disable.sh examples/bpl-55u-c5510/debloat.txt
+# Undo:    TV_HOST=<tv ip> tools/restore.sh examples/bpl-55u-c5510/debloat.txt com.google.android.apps.tv.launcherx
+# Dock:    TV_HOST=<tv ip> tools/theme.sh examples/bpl-55u-c5510
+# Everything is DISABLED, not uninstalled. Comment out any line you want to keep.
+# The stock launcher is left commented out: launcher/build-and-install.sh disables it only
+# after com.gathin.tvhome is installed, set as Home and verified.
+#
+# This is the tested owner profile. Streaming apps, Chromecast, Bluetooth/remote pairing,
+# TV input middleware, Play Store/Play Services and firmware updates stay enabled.
+
+# Changhong manufacturer store and help
+com.homwee.store
+com.homwee.help
+
+# Preloaded media utilities not used on this TV
+com.homwee.mmp.fileexplorer
+com.homwee.mmp.imageplayer
+
+# Google entertainment and ambient recommendations
+com.google.android.play.games
+com.google.android.videos
+com.google.android.apps.tv.dreamx       # set the launcher's ClockDream first
+
+# Optional voice assistant, disabled by the owner; the launcher shows its bilingual notice
+com.google.android.katniss
+
+# Screen sharing disabled by the owner; Chromecast built-in remains enabled
+com.homwee.multiscreenshare
+com.homwee.mmp.screenshare
+
+# Google TV Home claimants; verify Wi-Fi ownership before applying on another unit
+com.google.android.tungsten.setupwraith
+
+# Stock launcher: handled after installation by launcher/build-and-install.sh
+# com.google.android.apps.tv.launcherx
+
+# Already disabled on this unit before or outside this profile; intentionally not applied here:
+# com.netflix.ninja
+# com.google.android.youtube.tvmusic
+# com.google.android.youtube.tv
