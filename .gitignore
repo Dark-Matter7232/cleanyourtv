@@ -5,10 +5,16 @@ launcher/.gradle/
 launcher/build/
 launcher/app/build/
 launcher/local.properties
+# Local Android signing material and an isolated Gradle cache used for TV builds.
+.android-user/
+.gradle-user/
+# Ad-hoc TV inspection output kept beside the repo during a session.
+.work*.txt
 # your own TV's dumps (serial, android_id, device names) stay local
 backup/
 # session screenshots and working notes (may show the Wi-Fi name or account avatar) stay local
 shots/
+tv-host.txt
 work/
 # Perfetto traces from tools/trace.py: large, and they hold the TV's process list
 traces/

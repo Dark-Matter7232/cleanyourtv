@@ -17,10 +17,11 @@
 
     <!-- Apps pinned to the dock row at the bottom, in this order. Missing apps are skipped. -->
     <string-array name="dock_apps">
-        <item>com.netflix.ninja</item>
+        <item>com.stremio.one</item>
         <item>com.amazon.amazonvideo.livingroom</item>
-        <item>com.google.android.youtube.tv</item>
         <item>in.startv.hotstar</item>
+        <item>com.google.android.youtube.tv</item>
+        <item>com.graymatrix.did</item>
     </string-array>
     <!-- With fewer dock_apps than columns (or a dock app that is not installed), the free dock slots take
          the first grid apps, so the dock never shows a gap. false leaves them empty (#162); a theme can
@@ -165,6 +166,10 @@
          HW3=-, HW4=- (see examples/redmi-mitv-mftp0). Leave empty to omit. -->
     <string-array name="input_sources" translatable="false">
     </string-array>
+    <!-- Optional label for an HDMI port carrying a CEC audio system. Use the input ID suffix from
+         `dumpsys tv_input`, e.g. HW5; empty leaves the port label unchanged. -->
+    <string name="arc_audio_input" translatable="false">HW5</string>
+    <string name="arc_audio_label" translatable="false">Soundbar (ARC)</string>
 
     <!-- Remote buttons that open Settings, by Linux scancode (HOME_KEY_SERVICE=1 build-and-install.sh). Remotes
          that send KEYCODE_SETTINGS need no entry. Some send a code Android does not map: the Xiaomi/Fengmi
@@ -182,6 +187,7 @@
          a temporary `Log.d` in the helper's `onKeyEvent`: `getKeyCode()`, `getScanCode()`, `getDeviceId()`, read
          after a HOME_KEY_SERVICE=1 rebuild. Leave empty to omit. -->
     <integer-array name="settings_key_keycodes">
+        <item>83</item>
     </integer-array>
     <!-- What those Settings buttons open: false, the TV's Settings; true, a small glass panel at the top right
          with TV settings, Display, Network, Apps (re-enable an app) and Launcher settings, over whatever is on screen.
@@ -197,7 +203,7 @@
          off the enabled list. true: Home puts the helpers that were running back when it starts; one turned off in
          Settings stays off. Needs WRITE_SECURE_SETTINGS, which build-and-install grants with RESTORE_KEY_SERVICES=1
          (-RestoreKeyServices on Windows) and takes back on an install without it. Can also be set with "restore_key_services": true in a theme's config.json. -->
-    <bool name="restore_key_services">false</bool>
+    <bool name="restore_key_services">true</bool>
 
     <!-- More remote buttons that open the input switcher, by Android keycode (INPUT_KEY_SERVICE=1
          build-and-install.sh; KEYCODE_TV always does). For buttons only a disabled app answered: the Xiaomi
@@ -242,6 +248,12 @@
          where the firmware hands KEYCODE_GUIDE (172) to the stock launcher and no app ever receives it. Leave empty
          to omit. -->
     <string-array name="app_keys" translatable="false">
+        <item>KEYCODE_ASSIST:com.gathin.tvhome/.AssistantDisabledActivity</item>
+        <item>232:com.gathin.tvhome/.AssistantDisabledActivity</item>
+        <item>82:com.gathin.tvhome/.QuickSettingsActivity</item>
+        <item>247:org.smarttube.beta</item>
+        <item>265:com.stremio.one</item>
+        <item>249:in.startv.hotstar</item>
     </string-array>
 
     <!-- Package of the stock launcher, for TVs whose firmware turns it back on after it was disabled. XGIMI's
@@ -317,7 +329,7 @@
     <!-- The dock band as light frosted glass, like the Inputs, Wi-Fi and Settings pills, so a sky or wallpaper shows
          through it. false (the default) keeps the solid near-black band, or the cinematic shelf's dark glass. Can
          also be set with "dock_glass": true in a theme's config.json. -->
-    <bool name="dock_glass">false</bool>
+    <bool name="dock_glass">true</bool>
     <!-- Draw the dock band and its edge. false leaves the tiles floating on the wallpaper (config.xml dock_band). -->
     <bool name="dock_band">true</bool>
     <!-- Every app in one row: the dock apps first, the rest after them, and the row scrolls sideways when focus
@@ -368,6 +380,9 @@
     <!-- The Wi-Fi/Ethernet pill in the top bar. false hides it (on Android 14 with Location off it can
          only say "Wi-Fi", not the network name). Can also be set with "show_network_pill" in a theme. -->
     <bool name="show_network_pill">true</bool>
+    <!-- A round Recent apps button beside Wi-Fi. It uses the launcher's accessibility key service to open
+         Android's system Recents screen. Off by default. -->
+    <bool name="show_recents_button">true</bool>
     <!-- Apps shown as round buttons with their own logo in the top bar, left of the network pill, in this order.
          They leave the grid. Missing apps are skipped. Can also be set with "top_bar_apps" in a theme. -->
     <string-array name="top_bar_apps" translatable="false">
@@ -418,7 +433,7 @@
 
     <!-- Tiles per row in the grid; the dock always has this many slots. Tiles are 180dp wide at 4 columns and
          shrink to fit from 5 up (about 144dp at 5, 117dp at 6 on a 1080p TV). -->
-    <integer name="columns">4</integer>
+    <integer name="columns">5</integer>
 
     <!-- Basic motion is on; advanced effects are opt-in in the launcher's own Settings screen. -->
     <bool name="animations">true</bool>
@@ -475,9 +490,9 @@
          "focus_overshoot" in a theme's config.json. -->
     <bool name="focus_overshoot">true</bool>
 
-    <!-- One line under the clock: CPU, free memory and free storage. Off by default; a theme can set
+    <!-- One line under the clock: used memory. A theme can set
          "show_stats": true. Nothing is read, and the clock does not move, while this is false. -->
-    <bool name="show_stats">false</bool>
+    <bool name="show_stats">true</bool>
 
     <!-- Each team's next game in the F1 panel's place under the clock, rotating with the theme's F1 weekend: the package
          of an add-on that publishes them (the Game Day add-on: io.github.justinnewman.gameday; contract in docs/modules.md).

@@ -76,4 +76,35 @@ final class SystemSettings {
         }
         return intent(context, Settings.ACTION_DISPLAY_SETTINGS);
     }
+
+    /** The TV exposes both a dedicated sound page and a combined display/sound page for SOUND_SETTINGS.
+     *  Use the dedicated page so Quick Access never shows Android's chooser. */
+    static Intent soundIntent(Context context) {
+        ComponentName nativeSound = new ComponentName("com.android.tv.settings",
+                "com.android.tv.settings.device.sound.SoundActivity");
+        if (context.getPackageManager().resolveActivity(new Intent().setComponent(nativeSound), 0) != null) {
+            return new Intent().setComponent(nativeSound);
+        }
+        return intent(context, Settings.ACTION_SOUND_SETTINGS);
+    }
+
+    /** The Android TV Remote & accessories page. Changhong's TvSettings exposes it through the
+     * Settings app's SliceActivity. The URI must be passed as the private slice_uri extra; using
+     * the CONNECT_INPUT action opens only the pairing/search screen. */
+    static Intent accessoriesIntent(Context context) {
+        ComponentName sliceActivity = new ComponentName("com.android.tv.settings",
+                "com.android.tv.settings.slice.SliceActivity");
+        Intent explicit = new Intent("android.settings.SLICE_SETTINGS")
+                .setComponent(sliceActivity)
+                .putExtra("slice_uri",
+                        "content://com.android.tv.settings.accessories.sliceprovider/general")
+                .putExtra("startup_verification_required", false);
+        try {
+            context.getPackageManager().getActivityInfo(sliceActivity, 0);
+            return explicit;
+        } catch (PackageManager.NameNotFoundException unavailable) {
+            // Older/vendor settings packages may not ship the Slice-backed accessories page.
+        }
+        return new Intent("com.google.android.intent.action.CONNECT_INPUT");
+    }
 }

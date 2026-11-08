@@ -91,12 +91,14 @@ A home screen that looks like an Apple TV and gets out of the way:
 
 | Part | What it looks like |
 |---|---|
-| **A pitch-black home** | A dock of your four favourite apps in a rounded band, where Apple TV puts it. |
+| **A pitch-black home** | A dock of your favourite apps in a rounded band, where Apple TV puts it. |
 | **A top shelf** | Names the focused app in large type, with an ambient glow in a colour taken from its artwork. |
 | **The rest of your apps in a grid** | Slides up when you press Down. |
 | **One floating glass highlight** | Springs from tile to tile. The focused tile lifts and shows its name. |
-| **Three frosted buttons** | Inputs (HDMI ports under the names you gave them in the TV's settings, AV, Live TV), Wi-Fi or Ethernet with the network name, Settings. |
-| **A greeting, a thin clock and the date** | In [Outfit](https://fonts.google.com/specimen/Outfit), and a matching Clock screensaver. Set `show_stats` in config or a theme for one line under the clock: CPU, free memory and free storage. It stays off unless you turn it on, and it refreshes only while Home is on screen. |
+| **Frosted top controls** | Inputs (including the current Home source and HDMI/CEC names when the TV exposes them), Wi-Fi or Ethernet, Recent apps and Settings. |
+| **A greeting, a thin clock and the date** | In [Outfit](https://fonts.google.com/specimen/Outfit), and a matching Clock screensaver. Set `show_stats` in config or a theme for a quiet memory-used line under the clock. It refreshes only while Home is on screen. |
+| **Quick Access** | A matching glass menu for TV Settings, Network, Bluetooth, Sound, Display, Recent apps and Launcher Settings. |
+| **A useful Wi-Fi panel** | Shows the connected network, signal and IP details, filters out the current network from nearby results, and measures internet throughput once on Home startup before caching it for 30 minutes. |
 | **Themes and module cards** | Themes change colours, wallpaper, dock and columns without a rebuild, and module cards let other apps plug a tile in, only with your say-so. |
 
 And a TV that stops working against you: no sponsored rows, no "Discover" nags, no analytics
@@ -196,6 +198,8 @@ tools/venv/bin/python -I tools/wallpaper_prep.py ~/Pictures/trip mytheme/wallpap
 | Tool | What it does |
 |---|---|
 | [`tools/tv.py`](tools/tv.py) | Pure-Python ADB client: shell, batch, push, pull, reboot, and screenshots, optionally pressing remote keys first. Works where the stock `adb` binary is blocked. Optional [paired Google ADB backend](tools/native-adb.md) for encrypted Wireless debugging. |
+| [`capture-tv-screenshot.bat`](capture-tv-screenshot.bat) | Double-click on Windows, enter the TV address, and save a timestamped screenshot in `shots\`. |
+| [`tools/capture-screenshots.ps1`](tools/capture-screenshots.ps1) | Windows wrapper for `tv.py`: captures one or more timestamped PNGs, optionally pressing keys first. |
 | [`tools/docker-build.sh`](tools/docker-build.sh) | Builds the launcher or an add-on in Docker (JDK 17, Android SDK 34), so this computer needs nothing but Docker. Install the result with `SKIP_BUILD=1`. [Guide](tools/docker-build.md). |
 | [`tools/b64push.py`](tools/b64push.py) | Uploads large files such as APKs in base64 chunks and verifies the checksum. |
 | [`tools/relay.py`](tools/relay.py) | Forwards a local port to the TV's ADB port, for assistants whose sandbox can't reach your network. Listens on this computer only. [Guide](tools/relay.md). |
@@ -234,6 +238,8 @@ powershell -ExecutionPolicy Bypass -File launcher\build-and-install.ps1 -TvHost 
 powershell -ExecutionPolicy Bypass -File tools\disable.ps1 -TvHost 192.168.1.50 examples\xiaomi-mi-tv-4a\debloat.txt
 powershell -ExecutionPolicy Bypass -File tools\restore.ps1 -TvHost 192.168.1.50 examples\xiaomi-mi-tv-4a\debloat.txt
 powershell -ExecutionPolicy Bypass -File tools\theme.ps1 -TvHost 192.168.1.50 themes\aurora
+.\capture-tv-screenshot.bat
+powershell -ExecutionPolicy Bypass -File tools\capture-screenshots.ps1 -TvHost 192.168.1.50 -Count 3 -IntervalSeconds 10
 ```
 
 The last two are the undo and a theme push, the `tools/restore.sh` and `tools/theme.sh` lines the
@@ -278,7 +284,8 @@ debloat list. What the audit cannot do is prove intent: [docs/privacy.md](docs/p
 ## The launcher
 
 A small native home screen for Android TV: **about 572 KB**, plain Java, built for TVs with 1 GB of RAM.
-No blur, no video, no network permission, no background services. The **TV** needs Android 8.0 (API 26)
+No blur, no video, no analytics or continuous network polling. The Wi-Fi panel performs one bounded
+throughput check on Home startup and caches the result for 30 minutes. The **TV** needs Android 8.0 (API 26)
 or newer, the `minSdk` in [`launcher/app/build.gradle`](launcher/app/build.gradle); what is left on an older
 set is in [Troubleshooting](docs/TROUBLESHOOTING.md).
 
@@ -286,6 +293,11 @@ set is in [Troubleshooting](docs/TROUBLESHOOTING.md).
 |---|---|
 | **Configure** | Dock order, hidden apps, Live TV app, 4 to 7 tiles per row, reduced motion. All in [`config.xml`](launcher/app/src/main/res/values/config.xml) |
 | **Settings on the TV** | Hold OK on Settings for launcher settings. Optional `launcher_settings_button` makes a normal click open them directly; TV settings remain on the settings page and their app tile. |
+| **Quick Access** | A native-looking glass menu for TV Settings, Network, Bluetooth/Remote & Accessories, Sound, Display, Recent apps and Launcher Settings. |
+| **Recent apps** | A lightweight UsageStats-based list with app launching and Close all; it uses the same compact overlay when opened from Home or Quick Access. |
+| **Inputs** | Lists Home, HDMI, AV and Live TV sources, preserves CEC child-device names when the firmware reports them, and can add a TV-specific ARC label such as `HDMI 1 · Soundbar (ARC)`. |
+| **Wi-Fi panel** | Shows link details and nearby networks, then performs a bounded cached throughput check rather than polling continuously. |
+| **Memory display** | A small memory icon and used/total memory line under the clock, refreshed only while Home is visible. |
 | **Themes** | Background, wallpaper and layout from a `config.json` pushed over Wi-Fi, no rebuild. Twenty-nine ship in [`themes/`](themes/), the built-in `default/` included |
 | **31 languages** | Follows the TV's language, with a fully mirrored right-to-left layout for Hebrew |
 | **App library** | Optional: browse every installed app and add or remove Home shortcuts. See [the app library guide](docs/app-library.md) |
@@ -293,7 +305,7 @@ set is in [Troubleshooting](docs/TROUBLESHOOTING.md).
 | **Module cards** | Any TV app can offer its own tile; you approve each one once. See [`docs/modules.md`](docs/modules.md) |
 | **Add-ons** | Optional apps that plug in as module cards, kept in [`addons/`](addons/) and never built into the launcher |
 | **Clock screensaver** | A drifting clock over the glow, so nothing burns in |
-| **Remote keys** | Keeps the Input, YouTube and gear buttons working after the stock launcher is gone |
+| **Remote keys** | Keeps Input, Settings, Quick Access and app buttons working after the stock launcher is gone; a disabled Assistant key can show a bilingual explanation screen instead. |
 
 Themes, switches and add-ons together, with screenshots: [cleanyour.tv/addons](https://cleanyour.tv/addons).
 

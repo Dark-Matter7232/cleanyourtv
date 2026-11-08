@@ -5,6 +5,8 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.view.KeyEvent;
+import android.view.SoundEffectConstants;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -18,6 +20,36 @@ import android.widget.Toast;
  * closes the panel.
  */
 public final class QuickSettingsActivity extends Activity {
+    /** Keep the panel's navigation sounds in the same native sound-effect channel as Home. */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            int effect = -1;
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                    effect = SoundEffectConstants.NAVIGATION_UP;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    effect = SoundEffectConstants.NAVIGATION_DOWN;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    effect = SoundEffectConstants.NAVIGATION_LEFT;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    effect = SoundEffectConstants.NAVIGATION_RIGHT;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_CENTER:
+                case KeyEvent.KEYCODE_ENTER:
+                    effect = SoundEffectConstants.CLICK;
+                    break;
+                default:
+                    break;
+            }
+            if (effect != -1) getWindow().getDecorView().playSoundEffect(effect);
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     @Override
     protected void attachBaseContext(android.content.Context base) {
         super.attachBaseContext(LauncherLocale.wrap(base));   // locale
@@ -41,10 +73,13 @@ public final class QuickSettingsActivity extends Activity {
         findViewById(R.id.scrim).setOnClickListener(v -> finish());
         LinearLayout rows = findViewById(R.id.rows);
         addRow(rows, R.drawable.ic_settings, R.string.tv_settings, 0, SystemSettings.intent(this, Settings.ACTION_SETTINGS));
-        addRow(rows, R.drawable.ic_picture, R.string.quick_picture, 0, SystemSettings.displayIntent(this));
         addRow(rows, R.drawable.ic_wifi, R.string.quick_network, 0, SystemSettings.intent(this, Settings.ACTION_WIFI_SETTINGS));
-        addRow(rows, R.drawable.ic_apps, R.string.quick_apps, R.string.quick_apps_hint,
-                SystemSettings.intent(this, Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS));
+        addRow(rows, R.drawable.ic_bluetooth, R.string.quick_bluetooth, 0,
+                SystemSettings.accessoriesIntent(this));
+        addRow(rows, R.drawable.ic_sound, R.string.quick_sound, 0, SystemSettings.soundIntent(this));
+        addRow(rows, R.drawable.ic_picture, R.string.quick_picture, 0, SystemSettings.displayIntent(this));
+        addRow(rows, R.drawable.ic_recent_apps, R.string.recents, 0,
+                new Intent(this, RecentAppsActivity.class));
         // Through Home, so it rebuilds with the new choices when Launcher settings closes.
         addRow(rows, R.drawable.ic_home_settings, R.string.launcher_settings, 0,
                 new Intent(this, MainActivity.class).setAction(MainActivity.ACTION_LAUNCHER_SETTINGS));

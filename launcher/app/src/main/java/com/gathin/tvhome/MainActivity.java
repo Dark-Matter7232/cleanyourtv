@@ -79,6 +79,9 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -106,6 +109,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     static final String ACTION_LAUNCHER_SETTINGS = "com.gathin.tvhome.action.LAUNCHER_SETTINGS";
     /** Sent by the "library" action word of app_keys: open the App library over Home (needs app_library). */
     static final String ACTION_APP_LIBRARY = "com.gathin.tvhome.action.APP_LIBRARY";
+    /** Sent by QuickSettingsActivity: return to Home and open the same native Recents panel. */
+    static final String ACTION_RECENTS = "com.gathin.tvhome.action.RECENTS";
+    static final String EXTRA_RECENTS_QUICK_ACCESS = "quick_access_position";
     /** The system input switcher, forwarded here by InputsRequestActivity while handle_view_inputs is on. */
     static final String ACTION_VIEW_INPUTS = "com.android.tv.action.VIEW_INPUTS";
     /** Tiles per row and dock slots (res/values/config.xml, columns). Set in onCreate. */
@@ -113,6 +119,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean rtlAppGrid;
     private static final long MINUTE_MS = 60_000L;
     private static final long STATS_MS = 10_000L;
+    private static final long WIFI_SPEED_CACHE_MS = 30 * 60_000L;
+    private static final long WIFI_SPEED_FAILURE_RETRY_MS = 5 * 60_000L;
+    private static final long WIFI_SPEED_TEST_MS = 2_000L;
+    private static final int WIFI_SPEED_MAX_BYTES = 8 * 1024 * 1024;
+    private static final String WIFI_SPEED_URL = "https://speed.cloudflare.com/__down?bytes=" + WIFI_SPEED_MAX_BYTES;
+    private static final String WIFI_SPEED_PREFS = "wifi_speed_cache";
+    private static final String WIFI_SPEED_NETWORK = "network";
+    private static final String WIFI_SPEED_VALUE_KBPS = "value_kbps";
+    private static final String WIFI_SPEED_AT = "measured_at";
+    private static final String WIFI_SPEED_FAILURE_NETWORK = "failure_network";
+    private static final String WIFI_SPEED_FAILURE_AT = "failure_at";
     /**
      * 2025-01-01. TVs without a clock battery boot at the epoch (08:00 in China) and keep it until network
      * time arrives; the clock, date and greeting stay hidden before then.
@@ -135,6 +152,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean tileMenuEnabled;
     private String inputAction;
     private List<String> inputSources;
+    /** HDMI port carrying the TV's CEC audio system, configured for this TV (arc_audio_input). */
+    private String arcAudioInputId = "";
+    private String arcAudioLabel = "";
     private String inputUriScheme;
     private String sourcePanelService;
     private String sourcePanelAction;
@@ -184,11 +204,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView greeting;
     private View clockBlock;
     private View btnInputs;
+    private View btnRecents;
     /** config show_inputs_pill: false keeps the Inputs pill hidden even when the TV has inputs. */
     private boolean showInputsPill = true;
     private TextView btnWifi;
+    private volatile TextView wifiSpeedPanelStatus;
+    private volatile String wifiSpeedPanelNetwork;
+    private HandlerThread wifiSpeedThread;
+    private volatile boolean wifiSpeedRunning;
     /** The network pill's icon as last set, so a refresh that changes nothing does not lay the top bar out again. */
     private int wifiIcon;
+    /** The configured upper bound before the date-aware header layout narrows the Wi-Fi pill. */
+    private int wifiLabelBaseMaxWidth;
     /** The pills have been filled in once; later resumes refresh them after the first frame. */
     private boolean pillsShown;
     private TextView shamsiDate;
@@ -500,6 +527,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         tileMenuEnabled = cfg.tileMenu;
         inputAction = cfg.inputAction;
         inputSources = cfg.inputSources;
+        arcAudioInputId = getString(R.string.arc_audio_input).trim();
+        arcAudioLabel = getString(R.string.arc_audio_label).trim();
         inputUriScheme = cfg.inputUriScheme;
         sourcePanelService = cfg.sourcePanelService;
         sourcePanelAction = cfg.sourcePanelAction;
@@ -575,6 +604,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             clockRow.addOnLayoutChangeListener(centerGreeting);
         }
         btnWifi = findViewById(R.id.btnWifi);
+        wifiLabelBaseMaxWidth = btnWifi.getMaxWidth();
+        root.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                updateWifiWidthForDate());
         shamsiDate = findViewById(R.id.shamsiDate);
         stats = findViewById(R.id.stats);
         raceCalendar = cfg.raceCalendar;
@@ -820,9 +852,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
 
         btnInputs = findViewById(R.id.btnInputs);
+        btnRecents = findViewById(R.id.btnRecents);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
-        btnWifi.setOnClickListener(v -> openNetworkPill());
+        btnRecents.setOnClickListener(v -> showRecentApps(false));
+        btnRecents.setVisibility(getResources().getBoolean(R.bool.show_recents_button) ? View.VISIBLE : View.GONE);
+        btnWifi.setOnClickListener(v -> showWifiPanel());
         btnVpn.setOnClickListener(v -> openVpnPill());
         btnWifi.setOnLongClickListener(v -> {
             open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
@@ -881,7 +916,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             topButtons.setGravity(Gravity.CENTER_VERTICAL);
         }
         if (iconOnlyButtons) {
-            if (cfg.wifiLabelWidth > 0) btnWifi.setMaxWidth(Math.round(cfg.wifiLabelWidth * density));
+            if (cfg.wifiLabelWidth > 0) {
+                wifiLabelBaseMaxWidth = Math.round(cfg.wifiLabelWidth * density);
+                btnWifi.setMaxWidth(wifiLabelBaseMaxWidth);
+            }
             else makeIconOnly(btnWifi);
             makeIconOnly((TextView) btnSettings);
         }
@@ -908,7 +946,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 focusTile(singleRow ? lastFocused : lastFocused % COLUMNS);
                 return true;
             }
-            int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
+            int firstButton = firstVisibleTopButton().getId();
             int leftButton = rtlMenuBar ? R.id.btnSettings : firstButton;
             int rightButton = rtlMenuBar ? firstButton : R.id.btnSettings;
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return v.getId() == leftButton;
@@ -916,13 +954,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         };
         btnInputs.setOnKeyListener(pillKeys);
         btnWifi.setOnKeyListener(pillKeys);
+        btnRecents.setOnKeyListener(pillKeys);
         btnVpn.setOnKeyListener(pillKeys);
         btnSettings.setOnKeyListener(pillKeys);
         btnReorder.setOnKeyListener(pillKeys);
         btnLibraryTop.setOnKeyListener(pillKeys);
         for (View button : topAppButtons) button.setOnKeyListener(pillKeys);
         if (advancedEffects) {
-            List<View> pills = new ArrayList<>(Arrays.asList(btnInputs, btnWifi, btnVpn, btnReorder, btnLibraryTop, btnSettings));
+            List<View> pills = new ArrayList<>(Arrays.asList(btnInputs, btnWifi, btnRecents, btnVpn, btnReorder, btnLibraryTop, btnSettings));
             pills.addAll(topAppButtons);
             for (View button : pills) {
                 button.setOnFocusChangeListener((view, focused) -> view.animate()
@@ -970,7 +1009,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     .build(), vpnCallback);
         }
         // Not after recreate(): the launch intent survives it and would open the settings again.
-        if (savedInstanceState == null && !openLauncherSettingsIfAsked(getIntent()) && !openLibraryIfAsked(getIntent())) {
+        if (savedInstanceState == null && !openLauncherSettingsIfAsked(getIntent())
+                && !openLibraryIfAsked(getIntent()) && !openRecentsIfAsked(getIntent())) {
             openInputsIfAsked(getIntent());
         }
     }
@@ -1040,6 +1080,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         return true;
     }
 
+    private boolean openRecentsIfAsked(Intent intent) {
+        if (intent == null || !ACTION_RECENTS.equals(intent.getAction())) return false;
+        boolean quickAccessPosition = intent.getBooleanExtra(EXTRA_RECENTS_QUICK_ACCESS, false);
+        setIntent(new Intent(Intent.ACTION_MAIN));
+        View anchor = btnRecents;
+        if (anchor == null || anchor.getVisibility() != View.VISIBLE) return true;
+        anchor.post(() -> {
+            if (!isFinishing() && !isDestroyed()) {
+                anchor.requestFocus();
+                showRecentApps(quickAccessPosition);
+            }
+        });
+        return true;
+    }
+
     private boolean openLauncherSettingsIfAsked(Intent intent) {
         if (intent == null || !ACTION_LAUNCHER_SETTINGS.equals(intent.getAction())) return false;
         setIntent(new Intent(Intent.ACTION_MAIN));
@@ -1057,6 +1112,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         super.onNewIntent(intent);
         if (openLauncherSettingsIfAsked(intent)) return;
         if (openLibraryIfAsked(intent)) return;
+        if (openRecentsIfAsked(intent)) return;
         if (openInputsIfAsked(intent)) return;
         if (intent == null || !intent.hasCategory(Intent.CATEGORY_HOME)) return;
         if (gameDay != null && !stopped) gameDay.read();
@@ -1135,6 +1191,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             updateWifiLabel();
             updateInputsButton();
             pillsShown = true;
+            // The first resume can happen before RelativeLayout has measured the date and the pill row. Re-run
+            // once after that frame so the date-aware Wi-Fi width uses final on-screen coordinates.
+            refreshPillsAfterNextDraw();
         }
         if (showStats) startStats();
         if (gameDay != null) gameDay.start();
@@ -1390,6 +1449,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (tree.isAlive()) tree.removeOnGlobalFocusChangeListener(glassFocusListener);
         RemoteKeys.release(this);
         cancelHoldOk();
+        wifiSpeedRunning = false;
+        if (wifiSpeedThread != null) {
+            wifiSpeedThread.quitSafely();
+            wifiSpeedThread = null;
+        }
         if (gameDay != null) gameDay.shutdown();
         unregisterReceiver(packageReceiver);
         if (openOnStartOnWake) unregisterReceiver(wakeReceiver);
@@ -1438,6 +1502,30 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            int effect = -1;
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                    effect = SoundEffectConstants.NAVIGATION_UP;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    effect = SoundEffectConstants.NAVIGATION_DOWN;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    effect = SoundEffectConstants.NAVIGATION_LEFT;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    effect = SoundEffectConstants.NAVIGATION_RIGHT;
+                    break;
+                case KeyEvent.KEYCODE_DPAD_CENTER:
+                case KeyEvent.KEYCODE_ENTER:
+                    effect = SoundEffectConstants.CLICK;
+                    break;
+                default:
+                    break;
+            }
+            if (effect != -1) getWindow().getDecorView().playSoundEffect(effect);
+        }
         if (homeIgnoreChannelKeys && RemoteKeys.isChannelKey(event.getKeyCode())) return true;
         // Vendor keys (TCL Netflix button, 4062) never reach the key services, only the focused window, so their
         // "hold:" entries run here too or nowhere. Only while resumed: onPause releases Home's holds, and a DOWN
@@ -2304,32 +2392,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (!showStats) stats.setVisibility(View.GONE);
     }
 
-    /** One quiet line, e.g. "CPU 8%  ·  Memory 430 MB free  ·  Storage 3.1 GB free". Runs off the main thread. */
-    private static void appendStat(StringBuilder line, String part) {
-        if (line.length() > 0) line.append("  ·  ");
-        line.append(part);
-    }
-
     private String readStatsLine() {
-        int cpu = cpuPercent();
-        if (cpu < 0) {
-            try {
-                Thread.sleep(200);             // second sample, so the first line already has a CPU figure
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return "";
-            }
-            cpu = cpuPercent();
-        }
-        // Android 8 and later hide /proc/stat from apps on many TVs: then the line leaves CPU out rather than
-        // showing a dash that never fills in.
-        StringBuilder line = new StringBuilder();
-        if (cpu >= 0) line.append(getString(R.string.stats_cpu, cpu));
         long[] mem = memUsedOfTotalMb();
-        if (mem != null) appendStat(line, getString(R.string.stats_memory, mem[0], mem[1]));
-        String free = formatGb(getResources(), Environment.getDataDirectory().getFreeSpace());
-        if (!free.isEmpty()) appendStat(line, getString(R.string.stats_storage, free));
-        return StatsText.forLocale(line.toString(), getResources().getConfiguration().getLocales().get(0));
+        if (mem == null) return "";
+        return StatsText.forLocale(getString(R.string.stats_memory_value, mem[0], mem[1]),
+                getResources().getConfiguration().getLocales().get(0));
     }
 
     // -1: need another sample. -2: this source cannot be read (Android 9 hides /proc/stat from apps).
@@ -2483,9 +2550,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             target = Math.min(position + COLUMNS, count - 1);
         }
         focusTile(target);
-        // The default focus search clicks for Left/Right; Up/Down are handled here, so click for them too.
-        grid.playSoundEffect(keyCode == KeyEvent.KEYCODE_DPAD_UP
-                ? SoundEffectConstants.NAVIGATION_UP : SoundEffectConstants.NAVIGATION_DOWN);
         return true;
     }
 
@@ -2577,6 +2641,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         for (int k = 0; k < n; k++) {
             View button = bar.getChildAt(rtl ? n - 1 - k : k);
             if (button != btnInputs && button.getVisibility() == View.VISIBLE) return button;
+        }
+        return findViewById(R.id.btnSettings);
+    }
+
+    /** The actual left edge of the bar, including the optional Recents button before Inputs. */
+    private View firstVisibleTopButton() {
+        ViewGroup bar = findViewById(R.id.topButtons);
+        boolean rtl = getResources().getBoolean(R.bool.rtl_menu_bar);
+        int n = bar.getChildCount();
+        for (int k = 0; k < n; k++) {
+            View button = bar.getChildAt(rtl ? n - 1 - k : k);
+            if (button.getVisibility() == View.VISIBLE) return button;
         }
         return findViewById(R.id.btnSettings);
     }
@@ -2944,6 +3020,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void updateWifiLabel() {
         String text = getString(R.string.wifi);
         boolean vpn = false, online = false, validated = false;
+        boolean wifiLink = false;
+        String wifiNetworkKey = null;
         int icon = R.drawable.ic_wifi;
         // The festive light (diya flame or jack-o'-lantern candle): 0 is out (offline), 1 to 4 follow the Wi-Fi
         // signal, Ethernet burns steady at 4.
@@ -2982,11 +3060,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 flame = info != null ? Math.max(1, Math.min(4, WifiManager.calculateSignalLevel(info.getRssi(), 5))) : 3;
                 if (ssid != null) {
                     ssid = ssid.replace("\"", "").trim();
-                    if (!ssid.isEmpty() && !ssid.contains("unknown") && !ssid.equals("0x")) text = ssid;
+                    if (!ssid.isEmpty() && !ssid.contains("unknown") && !ssid.equals("0x")) {
+                        text = ssid;
+                        wifiLink = true;
+                        wifiNetworkKey = wifiSpeedNetworkKey(ssid, info.getNetworkId());
+                    }
                 }
             }
         } catch (Exception ignored) {
         }
+        maybeStartWifiSpeedTest(online && wifiLink ? wifiNetworkKey : null);
+        updateWifiWidthForDate();
         // With a VPN app configured, a VPN that is down matters too: show a red "VPN off" capsule then.
         boolean vpnDown = !vpn && online && !vpnApp.isEmpty();
         if (vpnPill) updateVpnPill(vpn);
@@ -3038,6 +3122,46 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 btnWifi.setCompoundDrawableTintList(tint);
             }
         }
+    }
+
+    /**
+     * Keep the whole weekday/day/month date visible.  The header is a RelativeLayout: the left clock block
+     * yields space to the right-hand pills, so a long SSID can otherwise make TextClock ellipsize its month.
+     * Measure the actual date text and spend the remaining width on the Wi-Fi pill.  This runs after layout and
+     * again whenever the Wi-Fi/date text refreshes, so it also adapts to orientation, themes and locale changes.
+     */
+    private void updateWifiWidthForDate() {
+        if (btnWifi == null || wifiIconOnly || btnWifi.getVisibility() != View.VISIBLE
+                || wifiLabelBaseMaxWidth <= 0 || root == null) return;
+        TextView date = findViewById(R.id.date);
+        View left = findViewById(R.id.leftBlock);
+        ViewGroup bar = findViewById(R.id.topButtons);
+        if (date == null || date.getVisibility() != View.VISIBLE || left == null || bar == null
+                || root.getWidth() <= 0 || bar.getMeasuredWidth() <= 0) return;
+
+        String dateText = date.getText() == null ? "" : date.getText().toString();
+        if (dateText.isEmpty()) return;
+        TextPaint paint = date.getPaint();
+        float dateWidth = paint.measureText(dateText);
+        if (date.getLetterSpacing() != 0f && dateText.length() > 1) {
+            dateWidth += (dateText.length() - 1) * date.getLetterSpacing() * date.getTextSize();
+        }
+        int requiredDateWidth = (int) Math.ceil(dateWidth) + date.getPaddingLeft() + date.getPaddingRight()
+                + Math.round(12 * density);
+        ViewGroup.LayoutParams rawParams = left.getLayoutParams();
+        int marginEnd = rawParams instanceof ViewGroup.MarginLayoutParams
+                ? ((ViewGroup.MarginLayoutParams) rawParams).getMarginEnd() : 0;
+        int otherButtons = bar.getMeasuredWidth() - btnWifi.getMeasuredWidth();
+        int[] dateLocation = new int[2];
+        int[] barLocation = new int[2];
+        date.getLocationInWindow(dateLocation);
+        bar.getLocationInWindow(barLocation);
+        int barRight = barLocation[0] + bar.getMeasuredWidth();
+        int roomForBar = barRight - dateLocation[0] - requiredDateWidth - marginEnd;
+        int maxWifi = Math.min(wifiLabelBaseMaxWidth, roomForBar - otherButtons);
+        int minimumWifi = Math.round(42 * density);
+        maxWifi = Math.max(minimumWifi, maxWifi);
+        if (btnWifi.getMaxWidth() != maxWifi) btnWifi.setMaxWidth(maxWifi);
     }
 
     /** config.xml icon_only_buttons. */
@@ -3336,6 +3460,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         return InputSources.mapped(inputSources, inputId);
     }
 
+    /** Matches either the complete TvInput ID or its stable hardware suffix (for example HW5). */
+    private boolean isArcAudioInput(String inputId) {
+        if (arcAudioInputId.isEmpty() || inputId == null) return false;
+        String suffix = inputId.substring(inputId.lastIndexOf('/') + 1);
+        return arcAudioInputId.equals(inputId) || arcAudioInputId.equals(suffix);
+    }
+
     /** Switches to a passthrough input (HDMI, AV). An input mapped in `input_sources` is opened by sending
      *  `input_action` with its source number as the int extra "input" (Xiaomi China firmware, whose tvplayer
      *  answers com.xiaomi.mitv.tvplayer.EXTSRC_PLAY and nothing else). Otherwise the standard way is
@@ -3412,7 +3543,335 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         return component != null ? new Intent().setComponent(component) : new Intent(inputAction);
     }
 
-    /** Dropdown menu under the Inputs pill: HDMI ports (with connection state), AV and Live TV. */
+    /** Compact glass menu of recently used launchable apps, backed by UsageStats on this TV. */
+    private void showRecentApps(boolean quickAccessPosition) {
+        View anchor = btnRecents;
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        int width = Math.max(quickAccessPosition ? 0 : anchor.getWidth(), (int) (230 * density));
+        final PopupWindow popup = glassPopup(panel, width);
+        PackageManager pm = getPackageManager();
+        for (String pkg : Recents.recent(this, 6)) {
+            try {
+                ApplicationInfo info = pm.getApplicationInfo(pkg, 0);
+                Intent launch = pm.getLeanbackLaunchIntentForPackage(pkg);
+                if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
+                if (launch == null || pm.resolveActivity(launch, 0) == null) continue;
+
+                View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+                ImageView icon = row.findViewById(R.id.icon);
+                icon.setImageDrawable(info.loadIcon(pm));
+                icon.setImageTintList(null);
+                ((TextView) row.findViewById(R.id.title)).setText(pm.getApplicationLabel(info));
+                row.findViewById(R.id.dot).setVisibility(View.GONE);
+                row.findViewById(R.id.status).setVisibility(View.GONE);
+                final Intent selected = new Intent(launch);
+                row.setOnClickListener(v -> {
+                    popup.dismiss();
+                    try {
+                        open(selected.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+                    } catch (RuntimeException unavailable) {
+                        Toast.makeText(this, R.string.recent_apps_unavailable, Toast.LENGTH_SHORT).show();
+                    }
+                });
+                rows.addView(row);
+            } catch (PackageManager.NameNotFoundException | RuntimeException unavailable) {
+                // The app may have disappeared or become disabled between the usage query and rendering.
+            }
+        }
+        boolean hasRecentRows = rows.getChildCount() > 0;
+        if (!hasRecentRows) {
+            View empty = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+            empty.findViewById(R.id.icon).setVisibility(View.GONE);
+            ((TextView) empty.findViewById(R.id.title)).setText(
+                    Recents.hasUsageAccess(this) ? R.string.recent_apps_empty : R.string.recents_need_access);
+            empty.findViewById(R.id.dot).setVisibility(View.GONE);
+            empty.findViewById(R.id.status).setVisibility(View.GONE);
+            empty.setFocusable(false);
+            empty.setClickable(false);
+            rows.addView(empty);
+        }
+        if (hasRecentRows || rows.getChildCount() > 0) addSeparator(rows);
+        View closeAll = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        ((ImageView) closeAll.findViewById(R.id.icon)).setImageResource(R.drawable.ic_apps);
+        ((TextView) closeAll.findViewById(R.id.title)).setText(R.string.close_all);
+        closeAll.findViewById(R.id.dot).setVisibility(View.GONE);
+        closeAll.findViewById(R.id.status).setVisibility(View.GONE);
+        closeAll.setOnClickListener(v -> {
+            long before = Recents.availableMemory(this);
+            Recents.closeAll(this);
+            popup.dismiss();
+            handler.postDelayed(() -> {
+                long after = Recents.availableMemory(this);
+                long freed = Math.max(0L, after - before) / (1024L * 1024L);
+                Toast.makeText(this, getString(R.string.freed_memory, freed), Toast.LENGTH_SHORT).show();
+            }, 350L);
+        });
+        rows.addView(closeAll);
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max(width, Math.min(panel.getMeasuredWidth(), (int) (360 * density))));
+        if (quickAccessPosition) dropInAtQuickAccess(popup, panel);
+        else dropIn(popup, panel, anchor, getResources().getBoolean(R.bool.rtl_menu_bar)
+                ? Gravity.END : Gravity.START);
+        for (int i = 0; i < rows.getChildCount(); i++) {
+            View row = rows.getChildAt(i);
+            if (row.isFocusable()) {
+                row.requestFocus();
+                break;
+            }
+        }
+    }
+
+    /** Quick Access uses a full-screen translucent activity with these same top-right insets. */
+    private void dropInAtQuickAccess(PopupWindow popup, View panel) {
+        panel.setAlpha(0f);
+        panel.setPivotY(0f);
+        panel.setScaleY(0.92f);
+        panel.setTranslationY(-8 * density);
+        popup.showAtLocation(root, Gravity.TOP | Gravity.END,
+                (int) (56 * density), (int) (105 * density));
+        panel.animate().alpha(1f).scaleY(1f).translationY(0f)
+                .setDuration(reducedMotion ? Motion.REDUCED_MS : 220)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+    }
+
+    /** Wi-Fi pill panel: current link details plus the TV's cached nearby networks. */
+    private void showWifiPanel() {
+        View anchor = btnWifi;
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = glassPopup(panel, (int) (300 * density));
+        android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                getApplicationContext().getSystemService(WIFI_SERVICE);
+        Runnable settings = () -> open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
+        android.net.wifi.WifiInfo info = wm == null ? null : wm.getConnectionInfo();
+        String current = info == null ? null : info.getSSID();
+        if (current != null) current = current.replace("\"", "");
+        boolean connected = info != null && info.getNetworkId() != -1 && current != null
+                && !current.startsWith("<");
+        Drawable wifiIcon = getDrawable(R.drawable.ic_wifi);
+        if (connected) {
+            boolean five = info.getFrequency() >= 4900;
+            String speedNetwork = wifiSpeedNetworkKey(current, info.getNetworkId());
+            String cachedSpeed = cachedWifiSpeed(speedNetwork);
+            View currentRow = recentRow(rows, wifiIcon, true, current,
+                    cachedSpeed != null ? getString(R.string.wifi_internet_speed, cachedSpeed)
+                            : getString(R.string.wifi_speed_checking, five ? "5 GHz" : "2.4 GHz"));
+            currentRow.setFocusable(false);
+            TextView speedStatus = currentRow.findViewById(R.id.status);
+            wifiSpeedPanelStatus = speedStatus;
+            wifiSpeedPanelNetwork = speedNetwork;
+            recentRow(rows, null, false, getString(R.string.wifi_signal_ip, signalWord(info.getRssi()),
+                    info.getRssi(), ipAddress()), null).setFocusable(false);
+        } else {
+            recentRow(rows, wifiIcon, true, getString(R.string.wifi_not_connected), null).setFocusable(false);
+        }
+        View change = recentRow(rows, getDrawable(R.drawable.ic_settings), true,
+                getString(R.string.wifi_change), null);
+        change.setOnClickListener(v -> {
+            popup.dismiss();
+            settings.run();
+        });
+
+        List<android.net.wifi.ScanResult> scans = new ArrayList<>();
+        try {
+            if (wm != null) {
+                scans.addAll(wm.getScanResults());
+                wm.startScan();
+            }
+        } catch (SecurityException ignored) {
+            // Location permission may be unavailable on another TV; current-link details still work.
+        }
+        Collections.sort(scans, (left, right) -> Integer.compare(right.level, left.level));
+        Set<String> seen = new HashSet<>();
+        List<android.net.wifi.ScanResult> nearby = new ArrayList<>();
+        String better5g = null;
+        boolean on24 = connected && info.getFrequency() < 4900;
+        for (android.net.wifi.ScanResult scan : scans) {
+            if (scan.SSID == null || scan.SSID.isEmpty() || !seen.add(scan.SSID)) continue;
+            if (connected && scan.SSID.equals(current)) continue;
+            if (on24 && better5g == null && scan.frequency >= 4900 && scan.level >= -67
+                    && !scan.SSID.equals(current) && sameRouter(scan.SSID, current)) {
+                better5g = scan.SSID;
+            }
+            if (nearby.size() < 4) nearby.add(scan);
+        }
+        if (better5g != null) {
+            recentRow(rows, null, false, getString(R.string.wifi_better_5g, better5g), null)
+                    .setFocusable(false);
+        }
+        if (!nearby.isEmpty()) {
+            addSeparator(rows);
+            recentRow(rows, null, false, getString(R.string.wifi_nearby), null).setFocusable(false);
+            for (android.net.wifi.ScanResult scan : nearby) {
+                boolean secured = scan.capabilities.contains("WPA") || scan.capabilities.contains("WEP")
+                        || scan.capabilities.contains("SAE");
+                boolean isCurrent = scan.SSID.equals(current);
+                String status = (isCurrent ? getString(R.string.connected) + " · " : "")
+                        + (scan.frequency >= 4900 ? "5 GHz" : "2.4 GHz")
+                        + " · " + signalWord(scan.level);
+                View row = recentRow(rows, secured ? getDrawable(R.drawable.ic_lock) : wifiIcon, true,
+                        scan.SSID, status);
+                row.setOnClickListener(v -> {
+                    popup.dismiss();
+                        settings.run();
+                });
+            }
+        } else {
+            addSeparator(rows);
+            recentRow(rows, null, false, getString(R.string.wifi_nearby_empty), null).setFocusable(false);
+        }
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max((int) (300 * density),
+                Math.min(panel.getMeasuredWidth(), (int) (420 * density))));
+        dropIn(popup, panel, anchor, getResources().getBoolean(R.bool.rtl_menu_bar)
+                ? Gravity.END : Gravity.START);
+        TextView panelSpeedStatus = wifiSpeedPanelStatus;
+        popup.setOnDismissListener(() -> {
+            if (openPopup == popup) openPopup = null;
+            if (wifiSpeedPanelStatus == panelSpeedStatus) {
+                wifiSpeedPanelStatus = null;
+                wifiSpeedPanelNetwork = null;
+            }
+        });
+        change.requestFocus();
+    }
+
+    private String signalWord(int rssi) {
+        return getString(rssi >= -55 ? R.string.signal_excellent : rssi >= -67
+                ? R.string.signal_good : rssi >= -75 ? R.string.signal_fair : R.string.signal_weak);
+    }
+
+    private String wifiSpeedNetworkKey(String ssid, int networkId) {
+        return ssid + "|" + networkId;
+    }
+
+    private String cachedWifiSpeed(String network) {
+        if (network == null) return null;
+        SharedPreferences prefs = getSharedPreferences(WIFI_SPEED_PREFS, MODE_PRIVATE);
+        if (!network.equals(prefs.getString(WIFI_SPEED_NETWORK, null))) return null;
+        long at = prefs.getLong(WIFI_SPEED_AT, 0L);
+        long value = prefs.getLong(WIFI_SPEED_VALUE_KBPS, 0L);
+        if (value <= 0L || at <= 0L || System.currentTimeMillis() - at >= WIFI_SPEED_CACHE_MS) return null;
+        return formatWifiSpeed(value);
+    }
+
+    private String formatWifiSpeed(long kbps) {
+        double mbps = kbps / 1000d;
+        return mbps < 10d ? String.format(Locale.US, "%.1f", mbps)
+                : String.format(Locale.US, "%.0f", mbps);
+    }
+
+    /** Starts one bounded download on Home startup; opening the panel never starts another request. */
+    private void maybeStartWifiSpeedTest(String network) {
+        if (network == null || cachedWifiSpeed(network) != null || wifiSpeedRunning) return;
+        SharedPreferences prefs = getSharedPreferences(WIFI_SPEED_PREFS, MODE_PRIVATE);
+        long failedAt = prefs.getLong(WIFI_SPEED_FAILURE_AT, 0L);
+        if (network.equals(prefs.getString(WIFI_SPEED_FAILURE_NETWORK, null))
+                && System.currentTimeMillis() - failedAt < WIFI_SPEED_FAILURE_RETRY_MS) return;
+        wifiSpeedRunning = true;
+        wifiSpeedThread = new HandlerThread("wifi-speed");
+        wifiSpeedThread.start();
+        new Handler(wifiSpeedThread.getLooper()).post(() -> runWifiSpeedTest(network));
+    }
+
+    private void runWifiSpeedTest(String network) {
+        long bytes = 0L;
+        long elapsed = 0L;
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(WIFI_SPEED_URL).openConnection();
+            connection.setConnectTimeout(3500);
+            connection.setReadTimeout(3500);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("Cache-Control", "no-cache");
+            int response = connection.getResponseCode();
+            if (response / 100 != 2) throw new IOException("HTTP " + response);
+            long startedAt = SystemClock.elapsedRealtime();
+            try (InputStream input = connection.getInputStream()) {
+                byte[] buffer = new byte[32 * 1024];
+                while (bytes < WIFI_SPEED_MAX_BYTES && SystemClock.elapsedRealtime() - startedAt < WIFI_SPEED_TEST_MS) {
+                    int read = input.read(buffer, 0, (int) Math.min(buffer.length, WIFI_SPEED_MAX_BYTES - bytes));
+                    if (read < 0) break;
+                    if (read == 0) continue;
+                    bytes += read;
+                }
+            }
+            elapsed = Math.max(1L, SystemClock.elapsedRealtime() - startedAt);
+        } catch (IOException ignored) {
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+        final long measuredKbps = bytes > 0L && elapsed > 0L
+                ? Math.max(1L, Math.round(bytes * 8d / elapsed)) : 0L;
+        handler.post(() -> {
+            SharedPreferences.Editor edit = getSharedPreferences(WIFI_SPEED_PREFS, MODE_PRIVATE).edit();
+            if (measuredKbps > 0L) {
+                edit.putString(WIFI_SPEED_NETWORK, network)
+                        .putLong(WIFI_SPEED_VALUE_KBPS, measuredKbps)
+                        .putLong(WIFI_SPEED_AT, System.currentTimeMillis())
+                        .remove(WIFI_SPEED_FAILURE_NETWORK).remove(WIFI_SPEED_FAILURE_AT);
+                if (network.equals(wifiSpeedPanelNetwork) && wifiSpeedPanelStatus != null) {
+                    wifiSpeedPanelStatus.setText(getString(R.string.wifi_internet_speed, formatWifiSpeed(measuredKbps)));
+                }
+            } else {
+                edit.putString(WIFI_SPEED_FAILURE_NETWORK, network)
+                        .putLong(WIFI_SPEED_FAILURE_AT, System.currentTimeMillis());
+                if (network.equals(wifiSpeedPanelNetwork) && wifiSpeedPanelStatus != null) {
+                    wifiSpeedPanelStatus.setText(R.string.wifi_speed_unavailable);
+                }
+            }
+            edit.apply();
+            wifiSpeedRunning = false;
+            if (wifiSpeedThread != null) {
+                wifiSpeedThread.quitSafely();
+                wifiSpeedThread = null;
+            }
+        });
+    }
+
+    /** "HomeNet 5G" and "HomeNet 2.4 GHz" are usually the same router. */
+    private static boolean sameRouter(String first, String second) {
+        if (first == null || second == null) return false;
+        String a = first.trim().split("[\\s_-]+")[0];
+        String b = second.trim().split("[\\s_-]+")[0];
+        return !a.isEmpty() && a.equalsIgnoreCase(b);
+    }
+
+    private String ipAddress() {
+        android.net.ConnectivityManager cm =
+                (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        android.net.LinkProperties properties = cm == null ? null
+                : cm.getLinkProperties(cm.getActiveNetwork());
+        if (properties != null) {
+            for (android.net.LinkAddress address : properties.getLinkAddresses()) {
+                if (address.getAddress() instanceof java.net.Inet4Address) {
+                    return address.getAddress().getHostAddress();
+                }
+            }
+        }
+        return "-";
+    }
+
+    private View recentRow(LinearLayout rows, Drawable icon, boolean tintIcon,
+                           String title, String status) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        ImageView image = row.findViewById(R.id.icon);
+        if (icon == null) {
+            image.setVisibility(View.GONE);
+        } else {
+            image.setImageDrawable(icon);
+            if (!tintIcon) image.setImageTintList(null);
+        }
+        ((TextView) row.findViewById(R.id.title)).setText(title);
+        TextView state = row.findViewById(R.id.status);
+        if (status == null) state.setVisibility(View.GONE); else state.setText(status);
+        row.findViewById(R.id.dot).setVisibility(View.GONE);
+        rows.addView(row);
+        return row;
+    }
+
     private void showInputs() {
         // A configured source panel and no Live TV row to offer next to it: the panel is the whole menu.
         // The BYINTEK U4 needs this, as its TvInputManager lists three HDMI ports and an AV input it doesn't have.
@@ -3434,6 +3893,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final PopupWindow popup = glassPopup(panel, width);
 
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        // Home is the active picture source whenever this dropdown is open: it is the launcher itself,
+        // not a TvInputInfo, so the framework cannot provide it alongside HDMI/AV/tuner rows.
+        addCurrentInputRow(rows);
+        addSeparator(rows);
         // inputs_connected_only: ports without a connected device and the AV jacks fold behind a "More inputs" row.
         boolean connectedOnly = inputsConnectedOnly;
         List<View> folded = new ArrayList<>();
@@ -3510,6 +3973,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 String label = l == null ? info.getId() : l.toString();
                 boolean hdmi = info.getType() == TvInputInfo.TYPE_HDMI;
                 if (hdmi && !label.toUpperCase(Locale.ROOT).contains("HDMI")) label = "HDMI " + label;
+                boolean arcAudio = hdmi && isArcAudioInput(info.getId());
                 CharSequence custom = InputNames.tidy(info.loadCustomLabel(this));
                 boolean named = custom != null && custom.length() > 0 && !custom.toString().equals(label);
                 if (!hdmi && rows.getChildCount() > 0 && !sawNonHdmi) {
@@ -3534,7 +3998,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     continue;
                 }
                 // The name given in Settings > Inputs (e.g. "MacBook Pro") goes first, the port after it.
-                if (named) label = custom + " \u00B7 " + label;
+                if (arcAudio && !arcAudioLabel.isEmpty()) {
+                    label = label + " \u00B7 " + arcAudioLabel;
+                } else if (named) {
+                    label = custom + " \u00B7 " + label;
+                }
                 final String id = info.getId();
                 // Analog AV jacks have no hotplug detection, and some TVs report them as always connected
                 // (TCL Smart TV Pro G03 says "Connected" with nothing plugged in), so AV rows show no state.
@@ -3685,6 +4153,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         });
         rows.addView(row);
         return row;
+    }
+
+    /** Non-selectable status row for the launcher's own Home surface. */
+    private void addCurrentInputRow(LinearLayout rows) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        ((ImageView) row.findViewById(R.id.icon)).setImageResource(R.drawable.ic_home_settings_pill);
+        ((TextView) row.findViewById(R.id.title)).setText(R.string.home_input);
+        ((TextView) row.findViewById(R.id.status)).setText(R.string.current_input);
+        row.findViewById(R.id.dot).setVisibility(View.GONE);
+        row.setFocusable(false);
+        row.setClickable(false);
+        rows.addView(row);
     }
 
     // ---- launcher settings and module cards -------------------------------------------------------
