@@ -190,6 +190,7 @@ tools/venv/bin/python -I tools/tv.py 'pm list packages'      # one shell command
 tools/disable.sh examples/xiaomi-mi-tv-4a/debloat.txt        # apply a debloat list
 tools/restore.sh examples/xiaomi-mi-tv-4a/debloat.txt        # undo it, stock launcher back
 tools/venv/bin/python -I tools/check.py examples/xiaomi-mi-tv-4a/debloat.txt   # what a firmware update undid
+tools/venv/bin/python -I tools/bpl-update.py                       # check a BPL/Changhong firmware server
 launcher/build-and-install.sh                                # build the launcher and make it Home (needs the TV_HOST export above)
 tools/theme.sh themes/aurora                                 # push a theme; --reset removes it
 tools/venv/bin/python -I tools/wallpaper_prep.py ~/Pictures/trip mytheme/wallpapers   # your photos, sized and darkened for the TV
@@ -208,6 +209,7 @@ tools/venv/bin/python -I tools/wallpaper_prep.py ~/Pictures/trip mytheme/wallpap
 | [`tools/check.py`](tools/check.py) | Compares the TV with the list that was applied, for what a firmware update undid; `--fix` puts it back. |
 | [`tools/match.py`](tools/match.py) | Reads a saved `pm list packages` and prints, for each package, how many lists in `examples/` disable it, how many keep it commented out, and their most common note; Android's core packages show as `never`. Offline, changes nothing (`tools/venv/bin/python -I tools/match.py packages.txt`). |
 | [`tools/adb-closed.py`](tools/adb-closed.py) | Checks that the TV's network ADB port is closed once debugging is off: exits 0 when the TV refuses the connection, 1 while it is still open, 2 when nothing answered or the check itself could not run. No `nc` needed. |
+| [`tools/bpl-update.py`](tools/bpl-update.py) | BPL/Changhong only: checks the TV's firmware service and optionally downloads a size- and MD5-verified update; it never installs or reboots. [Guide](tools/bpl-update.md). |
 | [`tools/philips-api.py`](tools/philips-api.py) | Philips only: checks that the JointSpace control API Home Assistant uses still answers, before and after a debloat (`tools/venv/bin/python -I tools/philips-api.py <tv ip>`). Port 1926 over HTTPS first, then 1925; reads only what answers without pairing. |
 | [`tools/privacy.py`](tools/privacy.py) | Audits the TV for voice, ACR and telemetry candidates and prints the evidence for each; `--write` turns the findings into a list `disable.sh` and `restore.sh` already understand. |
 | [`tools/theme.sh`](tools/theme.sh), [`theme_restart.py`](tools/theme_restart.py) | Push a folder from [`themes/`](themes/) to the launcher and restart Home. |
