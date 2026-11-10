@@ -17,6 +17,15 @@ android {
         versionName '3.5'
     }
 
+    signingConfigs {
+        debug {
+            def key = rootProject.file('../.android-user/debug.keystore')
+            if (key.exists()) {
+                storeFile key
+            }
+        }
+    }
+
     buildTypes {
         release {
             // R8 strips and optimises the code (AndroidX included): smaller APK, faster start on a slow TV CPU.
