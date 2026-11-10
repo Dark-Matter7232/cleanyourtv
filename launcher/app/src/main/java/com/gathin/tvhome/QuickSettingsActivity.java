@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.SoundEffectConstants;
@@ -20,6 +22,8 @@ import android.widget.Toast;
  * closes the panel.
  */
 public final class QuickSettingsActivity extends Activity {
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+
     /** Keep the panel's navigation sounds in the same native sound-effect channel as Home. */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
@@ -80,6 +84,8 @@ public final class QuickSettingsActivity extends Activity {
         addRow(rows, R.drawable.ic_picture, R.string.quick_picture, 0, SystemSettings.displayIntent(this));
         addRow(rows, R.drawable.ic_recent_apps, R.string.recents, 0,
                 new Intent(this, RecentAppsActivity.class));
+        // Keep utility actions together at the bottom, just above launcher-specific settings.
+        addActionRow(rows, R.drawable.ic_screenshot, R.string.quick_screenshot, this::takeScreenshot);
         // Through Home, so it rebuilds with the new choices when Launcher settings closes.
         addRow(rows, R.drawable.ic_home_settings, R.string.launcher_settings, 0,
                 new Intent(this, MainActivity.class).setAction(MainActivity.ACTION_LAUNCHER_SETTINGS));
@@ -119,5 +125,26 @@ public final class QuickSettingsActivity extends Activity {
             finish();
         });
         rows.addView(row);
+    }
+
+    private void addActionRow(LinearLayout rows, int icon, int title, Runnable action) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        ((ImageView) row.findViewById(R.id.icon)).setImageResource(icon);
+        ((TextView) row.findViewById(R.id.title)).setText(title);
+        row.findViewById(R.id.dot).setVisibility(View.GONE);
+        row.findViewById(R.id.status).setVisibility(View.GONE);
+        row.setOnClickListener(v -> action.run());
+        rows.addView(row);
+    }
+
+    /** Close the glass panel first, then capture the app that was underneath it. */
+    private void takeScreenshot() {
+        android.content.Context app = getApplicationContext();
+        finish();
+        MAIN.postDelayed(() -> {
+            if (!HomeKeyService.takeScreenshot()) {
+                Toast.makeText(app, R.string.not_available, Toast.LENGTH_SHORT).show();
+            }
+        }, 220L);
     }
 }

@@ -2,6 +2,8 @@ package com.gathin.tvhome;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -17,16 +19,28 @@ import android.os.SystemClock;
 import android.os.UserManager;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
+import android.hardware.HardwareBuffer;
 import android.provider.Settings;
+import android.provider.MediaStore;
+import android.os.Environment;
 import android.view.KeyEvent;
+import android.view.Display;
 import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.text.SimpleDateFormat;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Sends the remote's Home button to this launcher on remotes that emit KEYCODE_ALL_APPS for Home
@@ -92,6 +106,8 @@ public class HomeKeyService extends AccessibilityService {
     private boolean steppingOut;
     /** The bound helper, so the opt-in broadcast can arm it without waiting for a new connection. */
     static HomeKeyService running;
+    /** Screenshot conversion and MediaStore writes stay off the service and launcher UI threads. */
+    private final ExecutorService screenshotExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onServiceConnected() {
@@ -151,6 +167,7 @@ public class HomeKeyService extends AccessibilityService {
         }
         if (gamepads != null) gamepads.stop();
         if (consumeVolumeKeys) VolumeKeys.stop();
+        screenshotExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -373,6 +390,79 @@ public class HomeKeyService extends AccessibilityService {
     /** The settings menu offers Restart only while this helper is bound: it opens the system power menu. */
     static boolean canOpenPowerMenu() {
         return running != null;
+    }
+
+    /** Captures directly through Android 11's accessibility API, avoiding SystemUI's edit/share overlay. */
+    static boolean takeScreenshot() {
+        HomeKeyService service = running;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || service == null) return false;
+        service.takeScreenshotOnServiceThread();
+        return true;
+    }
+
+    private void takeScreenshotOnServiceThread() {
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, new TakeScreenshotCallback() {
+                @Override
+                public void onSuccess(ScreenshotResult result) {
+                    HardwareBuffer buffer = result.getHardwareBuffer();
+                    Bitmap hardware = null;
+                    Bitmap bitmap = null;
+                    try {
+                        if (buffer != null) {
+                            hardware = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
+                            if (hardware != null) bitmap = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                        }
+                    } catch (RuntimeException ignored) {
+                        // A vendor compositor may return a buffer that cannot be copied by the app.
+                    } finally {
+                        if (hardware != null) hardware.recycle();
+                        if (buffer != null) buffer.close();
+                    }
+                    boolean saved = bitmap != null && saveScreenshot(bitmap);
+                    if (bitmap != null) bitmap.recycle();
+                    int message = saved ? R.string.screenshot_saved : R.string.screenshot_failed;
+                    handler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show());
+                }
+
+                @Override
+                public void onFailure(int errorCode) {
+                    handler.post(() -> Toast.makeText(getApplicationContext(), R.string.screenshot_failed,
+                            Toast.LENGTH_SHORT).show());
+                }
+            });
+        } catch (SecurityException | IllegalStateException unavailable) {
+            // A firmware may reject the capability even after the service is enabled. Never take Home down for it.
+            handler.post(() -> Toast.makeText(getApplicationContext(), R.string.screenshot_failed,
+                    Toast.LENGTH_SHORT).show());
+        }
+    }
+
+    /** Saves in the standard TV gallery location with a stable, human-readable name. */
+    private boolean saveScreenshot(Bitmap bitmap) {
+        ContentResolver resolver = getContentResolver();
+        String name = "TVHome_" + new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US)
+                .format(new Date()) + ".png";
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+        values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                Environment.DIRECTORY_PICTURES + "/Screenshots");
+        values.put(MediaStore.Images.Media.IS_PENDING, 1);
+        android.net.Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) return false;
+        try (OutputStream output = resolver.openOutputStream(uri)) {
+            if (output == null || !bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                throw new IOException("screenshot encode failed");
+            }
+            ContentValues ready = new ContentValues();
+            ready.put(MediaStore.Images.Media.IS_PENDING, 0);
+            if (resolver.update(uri, ready, null, null) != 1) throw new IOException("screenshot publish failed");
+            return true;
+        } catch (IOException | RuntimeException failed) {
+            resolver.delete(uri, null, null);
+            return false;
+        }
     }
 
     /** The system power menu (Restart, and Power off where the firmware has it); the TV asks before it acts. */
