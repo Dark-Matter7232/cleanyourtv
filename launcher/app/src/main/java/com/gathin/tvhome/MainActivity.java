@@ -1477,6 +1477,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         for (int code : settingsKeycodes) {
             if (event.getKeyCode() != code) continue;
             if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
+                if (settingsKeyPanel) HomeKeyService.rememberScreenshotBackground();
                 Intent settings = settingsKeyPanel ? new Intent(this, QuickSettingsActivity.class)
                         : systemIntent(Settings.ACTION_SETTINGS);
                 // settings_key_clear_task, as in HomeKeyService: Back from Settings goes Home, not to a vendor page.

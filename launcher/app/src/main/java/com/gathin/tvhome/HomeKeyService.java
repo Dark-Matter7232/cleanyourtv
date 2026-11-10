@@ -28,6 +28,7 @@ import android.view.KeyEvent;
 import android.view.Display;
 import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
 
 import java.io.IOException;
@@ -94,6 +95,10 @@ public class HomeKeyService extends AccessibilityService {
     /** app_keys "front:" entries; the package in front goes to RemoteKeys.frontPackage, for both helpers. */
     private Map<Integer, String> frontAppKeys = Collections.emptyMap();
     private Map<Integer, String> frontAppScancodes = Collections.emptyMap();
+    /** Last real activity reported by Accessibility, used to name screenshots after the panel closes. */
+    private volatile String foregroundPackage = "";
+    /** Package underneath the current Quick Access panel, captured before the panel activity starts. */
+    private volatile String screenshotPackage = "";
     /** power_on_home_always: Home at every power-on, not only over Live TV. */
     private boolean powerOnAlways;
     /** power_on_home: re-arms after the screen turns on; null unless the key is on. */
@@ -296,6 +301,7 @@ public class HomeKeyService extends AccessibilityService {
             RemoteKeys.handle(this, event, null, hold);
             boolean held = hold != null && event.getEventTime() - event.getDownTime() >= RemoteKeys.HOLD_MS;
             if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled() && !held) {
+                if (settingsPanel) rememberScreenshotBackground();
                 Intent open = settingsPanel ? new Intent(this, QuickSettingsActivity.class)
                         : SystemSettings.intent(this, Settings.ACTION_SETTINGS);
                 // settings_key_clear_task: on MediaTek boards KEYCODE_SETTINGS is also a global key that opens Display &
@@ -334,13 +340,13 @@ public class HomeKeyService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
-        // app_keys "front:" entries: only activities count, so a toast or the volume bar doesn't change the app in front.
-        if ((!frontAppKeys.isEmpty() || !frontAppScancodes.isEmpty())
-                && event.getPackageName() != null && event.getClassName() != null) {
+        // Only activities count, so a toast or the volume bar doesn't change the app in front.
+        if (event.getPackageName() != null && event.getClassName() != null) {
             try {
                 ComponentName window = new ComponentName(event.getPackageName().toString(), event.getClassName().toString());
                 getPackageManager().getActivityInfo(window, 0);
-                RemoteKeys.frontPackage = window.getPackageName();
+                foregroundPackage = window.getPackageName();
+                RemoteKeys.frontPackage = foregroundPackage;
             } catch (PackageManager.NameNotFoundException notAnActivity) {
                 // a dialog, panel or overlay: the app under it is still in front
             }
@@ -396,11 +402,30 @@ public class HomeKeyService extends AccessibilityService {
     static boolean takeScreenshot() {
         HomeKeyService service = running;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || service == null) return false;
-        service.takeScreenshotOnServiceThread();
+        String packageName = service.screenshotPackage.isEmpty()
+                ? service.foregroundPackage : service.screenshotPackage;
+        service.handler.post(() -> Toast.makeText(service.getApplicationContext(),
+                R.string.screenshot_saving, Toast.LENGTH_SHORT).show());
+        service.takeScreenshotOnServiceThread(packageName);
         return true;
     }
 
-    private void takeScreenshotOnServiceThread() {
+    /** Called before Quick Access starts so its own activity cannot become the screenshot's app name. */
+    static void rememberScreenshotBackground() {
+        HomeKeyService service = running;
+        if (service == null) return;
+        String packageName = service.foregroundPackage;
+        try {
+            AccessibilityNodeInfo root = service.getRootInActiveWindow();
+            if (root != null && root.getPackageName() != null) packageName = root.getPackageName().toString();
+            if (root != null) root.recycle();
+        } catch (IllegalStateException ignored) {
+            // The accessibility connection can be in the middle of rebinding; the event-based fallback remains valid.
+        }
+        service.screenshotPackage = packageName;
+    }
+
+    private void takeScreenshotOnServiceThread(String packageName) {
         try {
             takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, new TakeScreenshotCallback() {
                 @Override
@@ -419,7 +444,7 @@ public class HomeKeyService extends AccessibilityService {
                         if (hardware != null) hardware.recycle();
                         if (buffer != null) buffer.close();
                     }
-                    boolean saved = bitmap != null && saveScreenshot(bitmap);
+                    boolean saved = bitmap != null && saveScreenshot(bitmap, packageName);
                     if (bitmap != null) bitmap.recycle();
                     int message = saved ? R.string.screenshot_saved : R.string.screenshot_failed;
                     handler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show());
@@ -439,20 +464,25 @@ public class HomeKeyService extends AccessibilityService {
     }
 
     /** Saves in the standard TV gallery location with a stable, human-readable name. */
-    private boolean saveScreenshot(Bitmap bitmap) {
+    private boolean saveScreenshot(Bitmap bitmap, String packageName) {
         ContentResolver resolver = getContentResolver();
-        String name = "TVHome_" + new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US)
-                .format(new Date()) + ".png";
+        String prefix = screenshotPrefix(packageName);
+        boolean webp = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+        String extension = webp ? ".webp" : ".png";
+        String name = prefix + "_" + new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US)
+                .format(new Date()) + extension;
         ContentValues values = new ContentValues();
         values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
-        values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+        values.put(MediaStore.Images.Media.MIME_TYPE, webp ? "image/webp" : "image/png");
         values.put(MediaStore.Images.Media.RELATIVE_PATH,
                 Environment.DIRECTORY_PICTURES + "/Screenshots");
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
         android.net.Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) return false;
         try (OutputStream output = resolver.openOutputStream(uri)) {
-            if (output == null || !bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+            Bitmap.CompressFormat format = webp
+                    ? Bitmap.CompressFormat.WEBP_LOSSLESS : Bitmap.CompressFormat.PNG;
+            if (output == null || !bitmap.compress(format, 100, output)) {
                 throw new IOException("screenshot encode failed");
             }
             ContentValues ready = new ContentValues();
@@ -463,6 +493,22 @@ public class HomeKeyService extends AccessibilityService {
             resolver.delete(uri, null, null);
             return false;
         }
+    }
+
+    /** Resolve the foreground app's label into a safe, readable filename prefix. */
+    private String screenshotPrefix(String packageName) {
+        String label = "TVHome";
+        if (packageName != null && !packageName.isEmpty()) {
+            try {
+                CharSequence appLabel = getPackageManager().getApplicationLabel(
+                        getPackageManager().getApplicationInfo(packageName, 0));
+                if (appLabel != null && appLabel.length() > 0) label = appLabel.toString();
+            } catch (PackageManager.NameNotFoundException ignored) {
+                // Keep the launcher name if the package disappeared while the screenshot was queued.
+            }
+        }
+        label = label.trim().replaceAll("[^\\p{L}\\p{N}._-]+", "_");
+        return label.isEmpty() ? "TVHome" : label;
     }
 
     /** The system power menu (Restart, and Power off where the firmware has it); the TV asks before it acts. */

@@ -69,12 +69,18 @@ public class InputKeyService extends AccessibilityService {
     protected boolean onKeyEvent(KeyEvent event) {
         if (consumeVolumeKeys && VolumeKeys.handle(this, event)) return true;
         // A scancode entry is more specific than any keycode, so it goes first.
-        if (RemoteKeys.handle(this, event, RemoteKeys.tap(appScancodes.get(event.getScanCode()),
-                frontAppScancodes.get(event.getScanCode())),
-                holdAppScancodes.get(event.getScanCode()))) return true;
-        if (RemoteKeys.handle(this, event, RemoteKeys.tap(appKeys.get(event.getKeyCode()),
-                frontAppKeys.get(event.getKeyCode())),
-                holdAppKeys.get(event.getKeyCode()))) return true;
+        String scancodeTarget = RemoteKeys.tap(appScancodes.get(event.getScanCode()),
+                frontAppScancodes.get(event.getScanCode()));
+        if (event.getAction() == KeyEvent.ACTION_UP && isQuickSettings(scancodeTarget)) {
+            HomeKeyService.rememberScreenshotBackground();
+        }
+        if (RemoteKeys.handle(this, event, scancodeTarget, holdAppScancodes.get(event.getScanCode()))) return true;
+        String keycodeTarget = RemoteKeys.tap(appKeys.get(event.getKeyCode()),
+                frontAppKeys.get(event.getKeyCode()));
+        if (event.getAction() == KeyEvent.ACTION_UP && isQuickSettings(keycodeTarget)) {
+            HomeKeyService.rememberScreenshotBackground();
+        }
+        if (RemoteKeys.handle(this, event, keycodeTarget, holdAppKeys.get(event.getKeyCode()))) return true;
         if (!isInputKey(event.getKeyCode())) return false;
         if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
             try {
@@ -83,6 +89,11 @@ public class InputKeyService extends AccessibilityService {
             }
         }
         return true;
+    }
+
+    private boolean isQuickSettings(String target) {
+        return "com.gathin.tvhome/.QuickSettingsActivity".equals(target)
+                || "com.gathin.tvhome/com.gathin.tvhome.QuickSettingsActivity".equals(target);
     }
 
     /** Unbound by Android: the user turned the helper off, so Home doesn't put it back (ServiceRepair). */
