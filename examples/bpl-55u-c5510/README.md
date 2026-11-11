@@ -2,7 +2,7 @@
 
 This profile is for the BPL 55U-C5510 sold by Changhong as an **AI PONT** device.
 It was checked on the owner's unit over the cleanup session and rechecked after the
-launcher changes. The list beside this note disables **11 packages**; it never uninstalls
+launcher changes. The list beside this note disables **10 packages**; it never uninstalls
 anything.
 
 | Field | Observed value |
@@ -20,17 +20,17 @@ anything.
 ## What was disabled
 
 The tested profile disables the Homwee store/help and two unused media utilities,
-Google Play Games and Movies/TV, the Google ambient screensaver, Google Assistant,
-the two Changhong screen-sharing receivers, and Google TV's setup wizard after the
-saved Wi-Fi network was checked. The stock launcher is disabled by
+Google Play Games and Movies/TV, the Google ambient screensaver, the two Changhong
+screen-sharing receivers, and Google TV's setup wizard after the saved Wi-Fi network
+was checked. The stock launcher is disabled by
 `launcher/build-and-install.sh` after the new Home has answered successfully.
 
-The owner kept streaming apps, Chromecast built-in, Play Store, Play Services, the
-MediaTek TV/input stack, Bluetooth and remote pairing, and both firmware/app update
-packages (`com.homwee.dmt.upgrade` and `com.homwee.upgrade`). The factory package
-(`com.homwee.factory`) and remote-key service (`com.homwee.synckey`) stay enabled and
-were never launched. `com.homwee.lightsensorservice` also stays enabled because it is
-part of the TV's ambient-light hardware path.
+The owner kept streaming apps, Chromecast built-in, Play Store, Play Services, Google
+Assistant, the MediaTek TV/input stack, Bluetooth and remote pairing, and both
+firmware/app update packages (`com.homwee.dmt.upgrade` and `com.homwee.upgrade`). The
+factory package (`com.homwee.factory`) and remote-key service (`com.homwee.synckey`)
+stay enabled and were never launched. `com.homwee.lightsensorservice` also stays
+enabled because it is part of the TV's ambient-light hardware path.
 
 The unit already had Netflix and YouTube Music disabled before this profile was made;
 YouTube was also disabled on the unit later, but none of those three packages is sent
@@ -44,9 +44,9 @@ receiver disabled here is `com.homwee.mmp.screenshare`.
 ## Launcher configuration
 
 `config.json` carries the tested five-slot dock—Stremio, Prime Video, Hotstar, YouTube
-and ZEE5—plus the memory display, glass dock, Settings key, Assistant notice, Quick
-Access key, app-key mappings and accessibility-service recovery. The launcher source's
-TV-specific XML values also set:
+and ZEE5—plus the memory display, glass dock, Settings key, Quick Access key, app-key
+mappings and accessibility-service recovery. The launcher source's TV-specific XML
+values also set:
 
 ```xml
 <string name="arc_audio_input">HW5</string>
@@ -55,10 +55,12 @@ TV-specific XML values also set:
 
 Those values make the first input read `HDMI 1 · Soundbar (ARC)`.
 
-The Assistant package is `com.google.android.katniss`. The launcher maps both the
-standard Assistant key and this remote's keycode 232 to a bilingual disabled notice.
-Keycode 82 opens Quick Access; keycode 83 opens Settings; keycodes 247, 265 and 249
-open SmartTube, Stremio and Hotstar respectively. Zee5 has no remote-key mapping.
+The Assistant package is `com.google.android.katniss`, left enabled. The remote's mic
+button opens it once the remote is paired; before pairing the firmware answers that
+button with its own Bluetooth pairing screen, which looks like a voice screen but only
+shows a picture of the remote. Keycode 82 opens Quick Access; keycode 83 opens Settings;
+keycodes 247, 265 and 249 open SmartTube, Stremio and Hotstar respectively. Zee5 has no
+remote-key mapping.
 
 ## Home, Wi-Fi and inputs
 

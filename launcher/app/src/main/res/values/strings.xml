@@ -49,9 +49,6 @@
     <string name="ethernet">Ethernet</string>
     <string name="offline">Offline</string>
     <string name="not_available">Not available on this TV</string>
-    <string name="assistant_disabled_title">Google Assistant is disabled</string>
-    <string name="assistant_disabled_title_hi">Google Assistant बंद है</string>
-    <string name="assistant_disabled_hint">Press Home to return</string>
     <string name="cant_open">Can\'t open %1$s</string>
     <string name="date_format">EEEE  d MMMM</string>
     <!-- Date next to the clock on Home; a locale can split it over two lines with \n. -->

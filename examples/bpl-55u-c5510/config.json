@@ -14,8 +14,6 @@
   "settings_key_keycodes": [83],
   "restore_key_services": true,
   "app_keys": [
-    "KEYCODE_ASSIST:com.gathin.tvhome/.AssistantDisabledActivity",
-    "232:com.gathin.tvhome/.AssistantDisabledActivity",
     "82:com.gathin.tvhome/.QuickSettingsActivity",
     "247:org.smarttube.beta",
     "265:com.stremio.one",

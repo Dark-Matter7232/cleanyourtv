@@ -24,8 +24,9 @@ com.google.android.play.games
 com.google.android.videos
 com.google.android.apps.tv.dreamx       # set the launcher's ClockDream first
 
-# Optional voice assistant, disabled by the owner; the launcher shows its bilingual notice
-com.google.android.katniss
+# Google Assistant kept: the remote's mic button opens it once the remote is paired. Until then the
+# firmware answers that button with Changhong's own pairing screen. Uncomment to turn voice off.
+# com.google.android.katniss
 
 # Screen sharing disabled by the owner; Chromecast built-in remains enabled
 com.homwee.multiscreenshare

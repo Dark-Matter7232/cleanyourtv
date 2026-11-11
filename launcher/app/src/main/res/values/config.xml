@@ -248,8 +248,6 @@
          where the firmware hands KEYCODE_GUIDE (172) to the stock launcher and no app ever receives it. Leave empty
          to omit. -->
     <string-array name="app_keys" translatable="false">
-        <item>KEYCODE_ASSIST:com.gathin.tvhome/.AssistantDisabledActivity</item>
-        <item>232:com.gathin.tvhome/.AssistantDisabledActivity</item>
         <item>82:com.gathin.tvhome/.QuickSettingsActivity</item>
         <item>247:org.smarttube.beta</item>
         <item>265:com.stremio.one</item>
